@@ -13,3 +13,92 @@ nlp:
   intentNoMatchThresholds:
     phrases: 0.2
     patterns: 0.2
+
+import requests
+import time
+import smtplib
+from email.message import EmailMessage
+
+# ================= НАСТРОЙКИ БОТА МАКС =================
+BOT_TOKEN = "ВАШ_ТОКЕН_ОТ_МАСТЕР_БОТА"
+BASE_URL = f"https://api.max.ru/bot{BOT_TOKEN}"
+
+# ================= НАСТРОЙКИ ПОЧТЫ (SMTP) =================
+# Настройки для Яндекса (для Mail.ru: smtp.mail.ru, для Gmail: smtp.gmail.com)
+SMTP_SERVER = "smtp.yandex.ru"
+SMTP_PORT = 465 # Порт для SSL (для Яндекса и Mail.ru)
+
+SMTP_USER = "твой_отправитель@yandex.ru" # Почта, с которой бот будет отправлять письма
+SMTP_PASSWORD = "твой_пароль_приложения" # Специальный пароль приложения (не от аккаунта!)
+TARGET_EMAIL = "твоя_основная_почта@mail.ru" # Куда бот должен присылать сообщения
+
+
+def send_email_notification(user_text, chat_id):
+    """Функция для формирования и отправки письма"""
+    msg = EmailMessage()
+    # Формируем текст письма, добавляя ID пользователя для идентификации
+    msg.set_content(f"Поступила новая информация от пользователя (ID: {chat_id}):\n\n{user_text}")
+    
+    msg['Subject'] = 'Новое сообщение из бота МАКС'
+    msg['From'] = SMTP_USER
+    msg['To'] = TARGET_EMAIL
+    
+    # Отправляем письмо через безопасное соединение SSL
+    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+
+def get_updates(offset=None):
+    """Функция получения новых сообщений от серверов МАКС"""
+    url = f"{BASE_URL}/getUpdates"
+    params = {"timeout": 30, "offset": offset}
+    response = requests.get(url, params=params)
+    return response.json()
+
+def send_message(chat_id, text):
+    """Функция отправки ответа пользователю в МАКС"""
+    url = f"{BASE_URL}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    requests.post(url, json=payload)
+
+def main():
+    print("Бот запущен. Ожидание сообщений и готовность к отправке на почту...")
+    update_id = None
+    
+    while True:
+        try:
+            updates = get_updates(offset=update_id)
+            
+            if "result" in updates:
+                for item in updates["result"]:
+                    update_id = item["update_id"] + 1
+                    
+                    if "message" in item:
+                        chat_id = item["message"]["chat"]["id"]
+                        text = item["message"].get("text", "")
+                        
+                        if text == "/start":
+                            send_message(chat_id, "Здравствуйте! Напишите любую информацию, и я передам её администратору.")
+                        elif text:
+                            # Пробуем отправить письмо
+                            try:
+                                print(f"Получено сообщение от {chat_id}, отправляю на почту...")
+                                send_email_notification(text, chat_id)
+                                
+                                # Если письмо отправлено успешно, подтверждаем это пользователю
+                                send_message(chat_id, "Спасибо! Ваша информация успешно отправлена на электронную почту.")
+                                print("Письмо успешно доставлено.")
+                            except Exception as email_err:
+                                # Если возникла проблема с почтой
+                                send_message(chat_id, "К сожалению, произошла техническая ошибка при отправке данных.")
+                                print(f"Ошибка SMTP: {email_err}")
+                        
+        except Exception as e:
+            print(f"Ошибка соединения с API МАКС: {e}")
+            time.sleep(5)
+
+if __name__ == '__main__':
+    main()
